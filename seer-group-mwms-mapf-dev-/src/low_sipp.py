@@ -46,12 +46,15 @@ class SippResolver:
 
     def __init__(self, ctx: LowContext, time_offset: int,
                  start_state: State, goal_state: State,
-                 last_goal_constraint: int = -1):
+                 last_goal_constraint: int = -1,
+                 max_timecost: float = 60.0):
         self.ctx = ctx
         self.time_offset = time_offset
         self.start_state = start_state
         self.goal_state = goal_state
         self.last_goal_constraint = last_goal_constraint
+        self.max_timecost = max_timecost
+        self._start_time = None
 
         logging.debug(f"SIPP, h={self.ctx.highId}, r={self.ctx.robotName}")
 
@@ -111,6 +114,7 @@ class SippResolver:
         return r
 
     def do_resolve_one(self) -> TargetOnePlanResult:
+        self._start_time = time.time()
         # 先计算起点约束
         start_v_key = vertex_key(self.start_state.x, self.start_state.y)
         start_v_cs = self.ctx.constraints.get(start_v_key)
@@ -129,13 +133,12 @@ class SippResolver:
         heapq.heappush(self.open_set, start_node)
 
         while self.open_set:
-            if (time.time() - self.op.startedOn) > 1:
+            if time.time() - self._start_time > self.max_timecost:
                 return TargetOnePlanResult(
                     self.ctx.robotName,
                     False,
-                    "Low timeout",  # 这里使用 reason
+                    f"Timeout: 超过最大耗时{self.max_timecost}s",
                     planCost=time.time() - self.op.startedOn,
-                    expandedCount=self.op.expandedNum,
                     fromState=self.start_state,
                     toState=self.goal_state,
                 )

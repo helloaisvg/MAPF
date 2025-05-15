@@ -54,7 +54,7 @@ class FocalHighNode:
 class ECBSResolver:
 
     def __init__(self, w: float, map_dim_x: int, map_dim_y: int, obstacles: set[int], tasks: dict[str, AgentTask],
-                 low_resolver: int, update_cost: Callable[[float], None]):
+                 low_resolver: int, update_cost: Callable[[float], None], max_timecost: float = 60.0):
         """
         :param w:
         :param map_dim_x:
@@ -71,6 +71,7 @@ class ECBSResolver:
         self.tasks = tasks
         self.low_resolver = low_resolver
         self.update_cost = update_cost
+        self.maxTimecost = max_timecost
 
         # TODO 它们会被并发访问
         self.high_id = 0
@@ -113,12 +114,10 @@ class ECBSResolver:
                     plans={},
                     timeCost=time.time() - self.start_on,
                 )
-
-            # 检查超时
-            if time_pass > 5:
+            if time_pass > self.maxTimecost:
                 return MapfResult(
                     ok=False,
-                    msg="Timeout",
+                    msg=f"Timeout: 超过最大耗时{self.maxTimecost}s",
                     plans={},
                     timeCost=time.time() - self.start_on,
                 )
@@ -180,7 +179,7 @@ class ECBSResolver:
                 constraints={},
                 oldAllPaths={}
             )
-            rs = search_low_many(fa_ctx, self.low_resolver, task)
+            rs = search_low_many(fa_ctx, self.low_resolver, task, self.maxTimecost)
             self.low_node_expanded += rs.expandedCount
 
             if not rs.ok:
@@ -235,7 +234,7 @@ class ECBSResolver:
             oldAllPaths=all_paths,
         )
 
-        rs = search_low_many(fa_ctx, self.low_resolver, task)
+        rs = search_low_many(fa_ctx, self.low_resolver, task, self.maxTimecost)
         self.low_node_expanded += rs.expandedCount
         if not rs.ok:
             logging.info(f"Failed to build child high node, no solution for agent {agent_name}")
@@ -298,7 +297,7 @@ class ECBSResolver:
             heapq.heapify(open_set)
 
 
-def search_low_many(ctx: LowContext, low_resolver_index: int, task: AgentTask) -> TargetManyPlanResult:
+def search_low_many(ctx: LowContext, low_resolver_index: int, task: AgentTask, max_timecost: float = 60.0) -> TargetManyPlanResult:
     """
     多目标搜索
     """
@@ -319,7 +318,7 @@ def search_low_many(ctx: LowContext, low_resolver_index: int, task: AgentTask) -
     time_num = 0
 
     for ti, goal_state in enumerate(goal_states):
-        sr = search_low_one(ctx, low_resolver_index, time_num, from_state, goal_state)
+        sr = search_low_one(ctx, low_resolver_index, time_num, from_state, goal_state, max_timecost)
         expanded_count += sr.expandedCount
 
         if not sr.ok:
@@ -347,12 +346,12 @@ def search_low_many(ctx: LowContext, low_resolver_index: int, task: AgentTask) -
     )
 
 
-def search_low_one(ctx: LowContext, low_resolver_index: int, time_num: int, from_state: State, goal_state: State) \
+def search_low_one(ctx: LowContext, low_resolver_index: int, time_num: int, from_state: State, goal_state: State, max_timecost: float = 60.0) \
         -> TargetOnePlanResult:
     low_resolver = None
     if low_resolver_index == 1:
-        low_resolver = SippResolver(ctx, time_num, from_state, goal_state)
+        low_resolver = SippResolver(ctx, time_num, from_state, goal_state, max_timecost=max_timecost)
     else:
-        low_resolver = LowResolver(ctx, time_num, from_state, goal_state)
+        low_resolver = LowResolver(ctx, time_num, from_state, goal_state, max_timecost=max_timecost)
     sr = low_resolver.resolve_one()
     return sr

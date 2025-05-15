@@ -6,7 +6,7 @@ from PySide6.QtWidgets import QWidget
 
 class CellUi(QWidget):
     def __init__(self, cell_size: int, cell_index: int, x: int, y: int, fill: QColor, label: str, tool_tip: str,
-                 toggle_obstacle: Callable[[int, int], None]):
+                 click_callback):
         super().__init__()
 
         self.cell_size = cell_size
@@ -15,12 +15,14 @@ class CellUi(QWidget):
         self.cell_y = y
         self.fill = fill
         self.label = label
-        self.toggle_obstacle = toggle_obstacle
+        self.click_callback = click_callback
 
         self.setFixedSize(cell_size, cell_size)
         self.move(x * (cell_size + 1), y * (cell_size + 1))
 
         self.setToolTip(tool_tip)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        self.setMouseTracking(True)
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -39,5 +41,10 @@ class CellUi(QWidget):
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.label)
 
     def mousePressEvent(self, event: QMouseEvent):
-        print("mousePressEvent")
-        self.toggle_obstacle(self.cell_x, self.cell_y)
+        print("cell clicked", self.cell_x, self.cell_y, event.button())
+        if event.button() == 2:  # 右键点击
+            if self.click_callback:
+                self.click_callback(self.cell_x, self.cell_y, event)
+        if event.button() == 1:  # 左键点击
+            if self.click_callback:
+                self.click_callback(self.cell_x, self.cell_y, event)

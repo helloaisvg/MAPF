@@ -4,13 +4,13 @@ import random
 import re
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional
 
-from PySide6.QtCore import QSize, QTimer
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QSize, QTimer, Qt
+from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QMouseEvent
 from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel, QScrollArea, QHBoxLayout, QLineEdit, \
-    QPushButton, QMessageBox, QFileDialog, QComboBox
+    QPushButton, QMessageBox, QFileDialog, QComboBox, QCheckBox
 from pydash import find_index
 
 from src.adg import build_adg, to_adg_key
@@ -112,6 +112,25 @@ class PathCell:
     log: str
 
 
+class MapGridWidget(QWidget):
+    def __init__(self, mapf_ui):
+        super().__init__()
+        self.mapf_ui = mapf_ui
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        self.setMouseTracking(True)
+
+    def wheelEvent(self, event):
+        # 缩放cell_size，限制范围
+        delta = event.angleDelta().y()
+        cell_size = self.mapf_ui.map_config.cellSize
+        if delta > 0:
+            cell_size = min(cell_size + 2, 80)
+        else:
+            cell_size = max(cell_size - 2, 10)
+        self.mapf_ui.map_config.cellSize = cell_size
+        self.mapf_ui.rebuild_map_cells()
+
+
 class MapfUi:
     def __init__(self):
         self.map_config = MapConfig()
@@ -150,129 +169,131 @@ class MapfUi:
         content_widget = QWidget()
         content_layout = QVBoxLayout()
 
+        # 地图操作按钮分组
         button_layout = QHBoxLayout()
-
-        save_map_btn = QPushButton('Save Map')
+        save_map_btn = QPushButton('保存地图')
         button_layout.addWidget(save_map_btn)
         save_map_btn.clicked.connect(self.save_map)
 
-        open_map_btn = QPushButton('Open Map')
+        open_map_btn = QPushButton('打开地图')
         button_layout.addWidget(open_map_btn)
         open_map_btn.clicked.connect(self.open_map)
 
-        rebuild_map_btn = QPushButton('Draw Map')
+        rebuild_map_btn = QPushButton('绘制地图')
         button_layout.addWidget(rebuild_map_btn)
         rebuild_map_btn.clicked.connect(self.draw_maps)
 
-        random_obstacle_btn = QPushButton('Random Obstacles')
+        # 新增清除障碍物按钮
+        clear_obstacle_btn = QPushButton('清除障碍物')
+        button_layout.addWidget(clear_obstacle_btn)
+        clear_obstacle_btn.clicked.connect(self.clear_obstacles)
+
+        # 新增随机障碍物按钮
+        random_obstacle_btn = QPushButton('随机障碍物')
         button_layout.addWidget(random_obstacle_btn)
         random_obstacle_btn.clicked.connect(self.random_obstacles)
 
-        clear_obstacles_btn = QPushButton('Clear Obstacles')
-        button_layout.addWidget(clear_obstacles_btn)
-        clear_obstacles_btn.clicked.connect(self.clear_obstacles)
-
         content_layout.addLayout(button_layout, 0)
 
+        # 参数输入分组
         line1 = QHBoxLayout()
-
         self.robot_num_edit = QLineEdit(str(self.map_config.robotNum))
-        add_widget_with_label(line1, self.robot_num_edit, 'Robot Num:')
+        add_widget_with_label(line1, self.robot_num_edit, '机器人数量:')
 
         self.map_dim_x_edit = QLineEdit(str(self.map_config.mapDimX))
-        add_widget_with_label(line1, self.map_dim_x_edit, 'Map Dim X:')
+        add_widget_with_label(line1, self.map_dim_x_edit, '地图宽度:')
 
         self.map_dim_y_edit = QLineEdit(str(self.map_config.mapDimY))
-        add_widget_with_label(line1, self.map_dim_y_edit, 'Map Dim Y:')
+        add_widget_with_label(line1, self.map_dim_y_edit, '地图高度:')
 
         self.cell_size_edit = QLineEdit(str(self.map_config.cellSize))
-        add_widget_with_label(line1, self.cell_size_edit, 'Cell Size:')
+        add_widget_with_label(line1, self.cell_size_edit, '单元格大小:')
 
         self.obstacle_ratio_edit = QLineEdit(str(self.map_config.obstacleRatio))
-        add_widget_with_label(line1, self.obstacle_ratio_edit, 'Obstacle Ratio:')
+        add_widget_with_label(line1, self.obstacle_ratio_edit, '障碍比例:')
 
-        # self.toggle_obstacle_cb = QCheckBox("Toggle Obstacle")
-        # add_widget_with_label(line1, self.toggle_obstacle_cb, '')
+        self.toggle_obstacle_cb = QCheckBox("障碍编辑")
+        add_widget_with_label(line1, self.toggle_obstacle_cb, '（勾选后点击单元格可切换障碍）')
 
         content_layout.addLayout(line1, 0)
 
+        # 目标与任务分组
         line2 = QHBoxLayout()
-
         self.target_num_edit = QLineEdit(str(self.map_config.targetNum))
         self.target_num_edit.setMaximumWidth(50)
-        add_widget_with_label(line2, self.target_num_edit, 'Target Num:')
+        add_widget_with_label(line2, self.target_num_edit, '目标数量:')
 
         self.goal_stop_times_edit = QLineEdit(str(self.map_config.goalStopTimes))
         self.goal_stop_times_edit.setMaximumWidth(50)
-        add_widget_with_label(line2, self.goal_stop_times_edit, 'Target Stop Times:')
+        add_widget_with_label(line2, self.goal_stop_times_edit, '目标等待时间:')
 
-        init_targets_btn = QPushButton('Random Targets')
+        init_targets_btn = QPushButton('随机目标')
         line2.addWidget(init_targets_btn)
         init_targets_btn.clicked.connect(self.random_targets)
 
         self.tasks_edit = QLineEdit()
-        add_widget_with_label(line2, self.tasks_edit, 'Tasks:')
+        add_widget_with_label(line2, self.tasks_edit, '任务:')
 
         content_layout.addLayout(line2, 0)
 
+        # 算法与求解分组
         line3 = QHBoxLayout()
-
         self.low_resolver = QComboBox()
         self.low_resolver.addItems(["A*", "SIPP"])
-        add_widget_with_label(line3, self.low_resolver, 'Low:')
+        add_widget_with_label(line3, self.low_resolver, '低层算法:')
 
         self.w_edit = QLineEdit(str(self.map_config.w))
         self.w_edit.setMaximumWidth(50)
         add_widget_with_label(line3, self.w_edit, 'W:')
 
-        resolve_btn = QPushButton('Resolve')
+        resolve_btn = QPushButton('求解')
         line3.addWidget(resolve_btn)
         resolve_btn.clicked.connect(self.resolve)
 
         self.result_edit = QLineEdit()
         self.result_edit.setReadOnly(True)
-        add_widget_with_label(line3, self.result_edit, 'Result:')
+        add_widget_with_label(line3, self.result_edit, '结果:')
 
         self.resolve_cost_edit = QLineEdit()
         self.resolve_cost_edit.setReadOnly(True)
         self.resolve_cost_edit.setMaximumWidth(60)
-        add_widget_with_label(line3, self.resolve_cost_edit, 'Cost:')
+        add_widget_with_label(line3, self.resolve_cost_edit, '耗时:')
 
         content_layout.addLayout(line3, 0)
 
+        # 仿真与路径分组
         line4 = QHBoxLayout()
-
         self.sim_speed_edit = QLineEdit(str(self.sim_speed))
         self.sim_speed_edit.setMaximumWidth(60)
-        add_widget_with_label(line4, self.sim_speed_edit, 'Sim Speed:')
+        add_widget_with_label(line4, self.sim_speed_edit, '仿真速度:')
 
-        sim_btn = QPushButton('Start Sim')
+        sim_btn = QPushButton('开始仿真')
         self.sim_btn = sim_btn
         line4.addWidget(sim_btn)
         sim_btn.clicked.connect(self.toggle_sim)
 
-        content_layout.addLayout(line4, 0)
-
         self.path_to_me_edit = QLineEdit()
-        add_widget_with_label(line4, self.path_to_me_edit, 'Path to me:')
+        add_widget_with_label(line4, self.path_to_me_edit, '回溯路径:')
         self.path_to_me_edit.returnPressed.connect(self.set_path_to_me)
 
-        self.load_low_search_btn = QPushButton('Load Low Search')
+        self.load_low_search_btn = QPushButton('加载低层搜索')
         line4.addWidget(self.load_low_search_btn)
         self.load_low_search_btn.clicked.connect(self.load_low_search)
 
-        ########
+        self.max_timecost_edit = QLineEdit("60")
+        add_widget_with_label(line4, self.max_timecost_edit, '最大耗时(秒):')
+
+        content_layout.addLayout(line4, 0)
 
         self.init_obstacles()
         self.reset_robot_colors()
 
-        map_grid = QWidget()
-        self.map_grid = map_grid
+        self.map_grid = MapGridWidget(self)
 
         self.map_cells: list[CellUi] = []
         self.rebuild_map_cells()
 
-        content_layout.addWidget(map_grid, 1)
+        content_layout.addWidget(self.map_grid, 1)
 
         content_layout.addStretch(100000)
 
@@ -290,7 +311,7 @@ class MapfUi:
         main_window = QWidget()
         self.main_window = main_window
 
-        main_window.setWindowTitle('MAPF DEV')
+        main_window.setWindowTitle('多智能体路径规划(MAPF)')
         # main_window.setGeometry(100, 100, 400, 300)
 
         # 将布局设置到主窗口
@@ -330,6 +351,11 @@ class MapfUi:
         self.map_req.tasks = tasks
 
         self.sim_speed = int(self.sim_speed_edit.text())
+
+        try:
+            self.map_config.maxTimecost = float(self.max_timecost_edit.text())
+        except Exception:
+            self.map_config.maxTimecost = 60.0
 
         self.reset_robot_colors()
 
@@ -375,12 +401,10 @@ class MapfUi:
 
     def clear_obstacles(self):
         self.do_inputs()
-
         self.map_config.obstacles = set()
         self.map_req.tasks = {}
         self.target_to_robot = {}
         self.plan = None
-
         self.rebuild_map_cells()
 
     def rebuild_map_cells(self):
@@ -401,32 +425,26 @@ class MapfUi:
             for y in range(y_n):
                 index = x_y_to_index(x, y, x_n)
 
-                fill = QColor("#ccc")
+                fill = QColor("#000000")  # 黑色障碍物
                 label = ""
                 tool_tip = ""
                 obstacle = index in self.map_config.obstacles
                 if obstacle:
-                    fill = QColor("#888")
+                    fill = QColor("#000000")  # 黑色障碍物
                 else:
-                    if self.low_search_my_path:
-                        cell = self.low_search_my_path.get(index)
-                        if cell:
-                            fill = QColor("green")
-                            label = cell.label
-                            tool_tip = cell.log
-                    elif self.low_search_index:
-                        c = self.low_search_index.get(index)
-                        if c:
-                            fill = c.color
-                            label = c.tool_tip  # str(c.order)
-                            tool_tip = c.tool_tip
+                    # 优先显示低层搜索颜色
+                    if self.low_search_index and index in self.low_search_index:
+                        fill = self.low_search_index[index].color
+                        label = self.low_search_index[index].tool_tip  # 可选：显示搜索信息
                     else:
                         robot = self.target_to_robot.get(index)
                         if robot is not None:
                             fill = self.robot_colors[robot]
+                        else:
+                            fill = QColor("#ffffff")  # 普通格子白色
 
                 cell = CellUi(cell_size, index, x, y, fill, label, tool_tip,
-                              lambda cx, cy: self.toggle_obstacle(cx, cy))
+                              lambda cx, cy, event=None: self.toggle_obstacle(cx, cy, event))
                 self.map_cells.append(cell)
                 cell.setParent(self.map_grid)
                 cell.show()
@@ -585,6 +603,7 @@ class MapfUi:
             tasks=tasks,
             low_resolver=self.low_resolver.currentIndex(),
             update_cost=self.update_cost,
+            max_timecost=self.map_config.maxTimecost,  # 传递最大耗时
         )
         try:
             r = high_resolver.search()
@@ -690,25 +709,40 @@ class MapfUi:
             return
 
     def build_robot_exe_path(self, robot_name: str, s2_index: int, s1: State, s2: State) -> RobotExePath:
+        dx = s2.x - s1.x
+        dy = s2.y - s1.y
+        def calc_direction_angle(dx, dy):
+            if dx == 1 and dy == 0:
+                return 0
+            elif dx == 0 and dy == 1:
+                return 90
+            elif dx == -1 and dy == 0:
+                return 180
+            elif dx == 0 and dy == -1:
+                return 270
+            else:
+                return s1.head  # 原地等待或特殊动作保持原朝向
+        # 判断是否移动
+        if dx != 0 or dy != 0:
+            direction = calc_direction_angle(dx, dy)
+            s1 = replace(s1, head=direction)
+            s2 = replace(s2, head=direction)
         # 需要转的角度，初始，-270 ~ +270
         d_head = abs(s2.head - s1.head)
-        # 270 改成 90
         if d_head > 180:
-            d_head = 90
+            d_head = 360 - d_head
         d_head /= 90
         rotate_time_num = math.ceil(d_head)
         move_time_num = abs(s1.x - s2.x + s1.y - s2.y)
         wait_time_num = s2.timeEnd - s2.timeStart + 1 - rotate_time_num - move_time_num
-        # 每 90 度 1 秒
         rotate_duration = rotate_time_num * 1000 * (1 + random.random() * self.stepDurationVar)
-        # 旋转，则移动为 0
         move_duration = move_time_num * 1000 * (1 + random.random() * self.stepDurationVar)
         cell_size = self.map_config.cellSize
         return RobotExePath(
             s2Index=s2_index,
             adgKey=to_adg_key(robot_name, s2_index),
-            timeStart=s1.timeStart or 0,  # 取开始点的
-            timeEnd=s2.timeEnd or 0,  # 取结束点的
+            timeStart=s1.timeStart or 0,
+            timeEnd=s2.timeEnd or 0,
             startOn=round(time.time() * 1000),
             s1=s1, s2=s2,
             rotateDuration=round(rotate_duration),
@@ -737,12 +771,24 @@ class MapfUi:
                 p_move = 1
             if p_move < 0:
                 p_move = 0
-
         cell_size = self.map_config.cellSize
+        # 计算插值位置
+        cur_x = s1.x + p_move * (s2.x - s1.x)
+        cur_y = s1.y + p_move * (s2.y - s1.y)
+        # 计算插值方向
+        dx = s2.x - s1.x
+        dy = s2.y - s1.y
+        if abs(dx) > 1e-6 or abs(dy) > 1e-6:
+            # 有移动，计算当前插值方向
+            angle = math.degrees(math.atan2(dy, dx))
+            head = (angle + 360) % 360
+        else:
+            # 没有移动，保持原朝向
+            head = s2.head
         return RobotPosition(
-            x=round((s1.x + p_move * (s2.x - s1.x)) * (cell_size + 1)),
-            y=round((s1.y + p_move * (s2.y - s1.y)) * (cell_size + 1)),
-            head=round(s1.head + (s2.head - s1.head) * p_rotate)
+            x=round(cur_x * (cell_size + 1)),
+            y=round(cur_y * (cell_size + 1)),
+            head=head
         )
 
     def update_robots_ui(self):
@@ -778,16 +824,19 @@ class MapfUi:
 
             ri += 1
 
-    def toggle_obstacle(self, x: int, y: int):
-        print(f"toggle obstacle: {x}, {y}")
+    def toggle_obstacle(self, x: int, y: int, event=None):
+        if not self.toggle_obstacle_cb.isChecked():
+            return
+        print(f"toggle obstacle: {x}, {y}, event={event}")
+        print("before:", self.map_config.obstacles)
         index = x_y_to_index(x, y, self.map_config.mapDimX)
         if index in self.map_config.obstacles:
             self.map_config.obstacles.remove(index)
         else:
             self.map_config.obstacles.add(index)
-
-        # 暂时总体重绘
+        print("after:", self.map_config.obstacles)
         self.rebuild_map_cells()
+        self.map_grid.update()
 
     def save_map(self):
         self.do_inputs()

@@ -23,23 +23,49 @@ class RobotWidget(QWidget):
         center_y = round(self.rect().y() + size / 2)
 
         transform = QTransform()
-        # print(f"head: {self.head}")
-        # 实现中心变换，比较麻烦
         transform.translate(center_x, center_y)
-        transform.rotate(self.head)
+        transform.rotate(self.head + 90)
         transform.translate(-center_x, -center_y)
-
         painter.setTransform(transform)
-        painter.setBrush(QColor(self.color))
+
+        # 画履带（左右深色矩形）
+        tread_w = size * 0.18
+        tread_h = size * 0.85
+        tread_y = center_y - tread_h / 2
+        tread_color = QColor("#444a3f")
+        painter.setBrush(tread_color)
+        painter.setPen(QColor("#222222"))
+        # 左履带
+        painter.drawRect(center_x - size * 0.35 - tread_w / 2, tread_y, tread_w, tread_h)
+        # 右履带
+        painter.drawRect(center_x + size * 0.35 - tread_w / 2, tread_y, tread_w, tread_h)
+
+        # 画底盘（坦克车身）
+        body_w = size * 0.56
+        body_h = size * 0.7
+        body_x = center_x - body_w / 2
+        body_y = center_y - body_h / 2
+        body_color = QColor(self.color)
+        painter.setBrush(body_color)
         painter.setPen(QColor("#333333"))
-        offset = 4
-        painter.drawEllipse(round(self.rect().x() + offset), round(self.rect().y() + offset),
-                            size - offset * 2, size - offset * 2)
+        painter.drawRoundedRect(body_x, body_y, body_w, body_h, 4, 4)
 
-        painter.drawLine(center_x, center_y, round(self.rect().x() + size), center_y)
+        # 画炮塔（小圆）
+        turret_r = size * 0.18
+        painter.setBrush(QColor("#222222"))
+        painter.setPen(QColor("#222222"))
+        painter.drawEllipse(center_x - turret_r, center_y - turret_r, turret_r * 2, turret_r * 2)
 
+        # 画炮管（正面方向，head方向）
+        gun_len = size * 0.38
+        gun_w = size * 0.09
+        painter.setBrush(QColor("#222222"))
+        painter.setPen(QColor("#222222"))
+        painter.drawRect(center_x - gun_w/2, center_y - gun_len - turret_r, gun_w, gun_len)
+
+        # 画编号
         small_font = QFont()
         small_font.setPointSize(8)
         painter.setFont(small_font)
-        painter.setPen(QColor("#333333"))
+        painter.setPen(QColor("#ffffff"))
         painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.name)

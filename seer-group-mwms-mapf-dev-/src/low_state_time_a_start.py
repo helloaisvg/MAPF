@@ -83,7 +83,8 @@ class LowResolver:
 
     def __init__(self, ctx: LowContext, time_offset: int,
                  start_state: State, goal_state: State,
-                 last_goal_constraint: int = -1):
+                 last_goal_constraint: int = -1,
+                 max_timecost: float = 60.0):
         """
         :param time_offset: 起始时刻
         :param start_state:
@@ -97,6 +98,8 @@ class LowResolver:
         self.start_state = start_state
         self.goal_state = goal_state
         self.last_goal_constraint = last_goal_constraint
+        self.max_timecost = max_timecost
+        self._start_time = None
 
         self.node_id = 0
 
@@ -136,6 +139,7 @@ class LowResolver:
         )
 
         self.open_set: list[OpenLowNode] = []
+        self.open_dict: dict[str, LowNode] = {}  # open查重dict
         self.focal_set: list[FocalLowNode] = []
         self.closed_set: dict[str, LowNode] = {}  # by key
 
@@ -163,6 +167,7 @@ class LowResolver:
         return r
 
     def do_resolve_one(self) -> TargetOnePlanResult:
+        self._start_time = time.time()
         # 初始节点
         start_node = LowNode(
             self.node_id,
@@ -172,11 +177,20 @@ class LowResolver:
             f=self.admissible_heuristic(self.start_state),
             focalValue=0.0,
         )
-
         heapq.heappush(self.open_set, OpenLowNode(start_node))
+        self.open_dict[start_node.state.state_time_key()] = start_node  # 新增dict
         heapq.heappush(self.focal_set, FocalLowNode(start_node))
 
         while self.open_set:
+            if time.time() - self._start_time > self.max_timecost:
+                return TargetOnePlanResult(
+                    self.ctx.robotName,
+                    False,
+                    f"Timeout: 超过最大耗时{self.max_timecost}s",
+                    planCost=time.time() - self.op.startedOn,
+                    fromState=self.start_state,
+                    toState=self.goal_state,
+                )
             # 每次进来重建 focal set，因此后续都不处理向 focal set 添加元素
             self.rebuild_focal_set()
 
@@ -266,8 +280,6 @@ class LowResolver:
         state_time_key = neighbor.state_time_key()
         old_closed = self.closed_set.get(state_time_key)
         if old_closed:
-            # 如果在 close 里
-            # TODO 判断 f 还是判断 g
             if f < old_closed.f:
                 self.op.warnings.append(f"SmallerFInClosed|{cell_index}|{neighbor.x},{neighbor.y}|"
                                         f"{neighbor.timeStart}:{neighbor.timeEnd}|"
@@ -276,31 +288,29 @@ class LowResolver:
                 del self.closed_set[state_time_key]
             else:
                 return
-        old_open = self.find_open_node_by_key(state_time_key)
+        old_open = self.open_dict.get(state_time_key)
         if old_open:
-            # if g >= old_open.g:
             if f >= old_open.f:
                 return
             node = replace(old_open, g=g, f=f, focalValue=focal_value)
             self.replace_open_node(OpenLowNode(node))
         else:
             heapq.heappush(self.open_set, OpenLowNode(node))
+            self.open_dict[state_time_key] = node  # 新增
 
     def admissible_heuristic(self, state: State) -> float:
         """
         改进的启发式函数，考虑距离与旋转
         """
-        # 计算曼哈顿距离
-        manhattan_dist = abs(state.x - self.goal_state.x) + abs(state.y - self.goal_state.y)
-
-        # 计算旋转成本
-        d_head = abs(state.head - self.goal_state.head)
-        if d_head > 180:
-            d_head = 360 - d_head
-        rotation_cost = (d_head / 90.0) * self.ctx.rotateUnitCost
-
-        # 综合距离和旋转
-        return (float(manhattan_dist) / self.ctx.moveUnitCost) + (float(rotation_cost) / self.ctx.rotateUnitCost)
+        # h_val: 曼哈顿距离+旋转启发式
+        dx = abs(state.x - self.goal_state.x)
+        dy = abs(state.y - self.goal_state.y)
+        h = dx + dy
+        # 加上旋转代价
+        if hasattr(state, 'head') and hasattr(self.goal_state, 'head'):
+            dh = abs(state.head - self.goal_state.head) // 90
+            h += dh
+        return h
 
     def calc_focal_value(self, from_node: LowNode, to_state: State, to_state_g: float, to_state_f: float) -> float:
         """
@@ -431,11 +441,13 @@ class LowResolver:
         if index < 0:
             return
         else:
-            # 把最后一个填充过来
             self.open_set[index] = self.open_set[-1]
             self.open_set.pop()
-            # 必须重建！o(n)
             heapq.heapify(self.open_set)
+            # 同步删除dict
+            k = node.state.state_time_key()
+            if k in self.open_dict:
+                del self.open_dict[k]
 
     def replace_open_node(self, new_one: OpenLowNode):
         index = find_index(self.open_set, lambda n: n.n.id == new_one.n.id)
@@ -443,8 +455,10 @@ class LowResolver:
             heapq.heappush(self.open_set, new_one)
         else:
             self.open_set[index] = new_one
-            # 必须重建！o(n)
             heapq.heapify(self.open_set)
+        # 同步更新dict
+        k = new_one.n.state.state_time_key()
+        self.open_dict[k] = new_one.n
 
     def build_ok_result(self, min_focal_n: LowNode):
         # 达到时间在最后一次目标点被约束的时刻后
